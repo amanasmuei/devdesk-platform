@@ -26,8 +26,16 @@ func HashPassword(password string) (string, error) {
 	return string(bytes), nil
 }
 
+// MaxPasswordLength matches bcrypt's 72-byte input limit; longer inputs
+// are rejected instead of being silently truncated.
+const MaxPasswordLength = 72
+
 // VerifyPassword reports whether the plaintext password matches the hash.
+// Inputs longer than bcrypt's limit cannot match any hash.
 func VerifyPassword(password, hash string) bool {
+	if len(password) > MaxPasswordLength {
+		return false
+	}
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }
 

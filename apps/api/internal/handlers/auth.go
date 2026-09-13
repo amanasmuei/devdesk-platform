@@ -25,6 +25,10 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 	if in.Email == "" || in.Password == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "email and password are required")
 	}
+	if len(in.Password) > auth.MaxPasswordLength {
+		return fiber.NewError(fiber.StatusBadRequest,
+			"password must be at most 72 characters")
+	}
 
 	var (
 		id      string
@@ -72,6 +76,10 @@ func (h *Handler) Register(c *fiber.Ctx) error {
 	}
 	if len(in.Password) < 8 {
 		return fiber.NewError(fiber.StatusBadRequest, "password must be at least 8 characters")
+	}
+	if len(in.Password) > auth.MaxPasswordLength {
+		return fiber.NewError(fiber.StatusBadRequest,
+			"password must be at most 72 characters")
 	}
 
 	hash, err := auth.HashPassword(in.Password)

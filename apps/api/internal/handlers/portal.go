@@ -4,12 +4,13 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+
+	"github.com/amanasmuei/devdesk-platform/apps/api/internal/notify"
 )
 
 // ClientDecide handles POST /api/portal/requests/:id/decision: lets the
-// signed-in client accept or decline a quoted request. Only the owner may
-// decide, only while the request is quoted, and declining is possible at
-// any earlier stage too (before work starts).
+// signed-in client accept or decline a quoted request. Only the owner
+// may decide; accept only from quoted, decline from submitted/quoted.
 func (h *Handler) ClientDecide(c *fiber.Ctx) error {
 	userID, _ := c.Locals("userID").(string)
 	id := c.Params("id")
@@ -28,28 +29,65 @@ func (h *Handler) ClientDecide(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "decision must be accept or decline")
 	}
 
-	newStatus := "accepted"
-	if in.Decision == "decline" {
-		newStatus = "declined"
+	// Read current state first so the transition can be validated against
+	// the ladder and the admin can be notified with the request details.
+	var (
+		curStatus string
+		name      string
+		email     string
+		service   string
+		quote     *string
+	)
+	err := h.DB.QueryRow(c.Context(),
+		`SELECT status, name, email, service, quote_price::text
+		 FROM requests
+		 WHERE id = $1 AND (client_id = $2 OR email = $3)`,
+		id, userID, c.Locals("email"),
+	).Scan(&curStatus, &name, &email, &service, &quote)
+	if err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "request not found")
+	}
+
+	newStatus, ok := clientDecide(curStatus, in.Decision)
+	if !ok {
+		return fiber.NewError(fiber.StatusConflict,
+			"this request cannot be "+in.Decision+"ed while it is "+curStatus)
 	}
 
 	tag, err := h.DB.Exec(c.Context(), `
 		UPDATE requests
 		SET status = $1, updated_at = now()
-		WHERE id = $2
-		  AND (client_id = $3 OR email = $4)
-		  AND (status = 'quoted' OR ($1 = 'declined' AND status = 'submitted'))`,
-		newStatus, id, userID, c.Locals("email"))
+		WHERE id = $2 AND status = $3`,
+		newStatus, id, curStatus)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to update request")
 	}
 	if tag.RowsAffected() == 0 {
-		return fiber.NewError(fiber.StatusNotFound, "request not found or not in a decidable state")
+		// Concurrent update changed the state; surface a conflict.
+		return fiber.NewError(fiber.StatusConflict, "request state changed, reload and try again")
+	}
+
+	// Best-effort admin notification.
+	if h.Mailer != nil && h.Mailer.Enabled() {
+		if adminEmail, _ := c.Locals("adminEmail").(string); adminEmail != "" {
+			if newStatus == "accepted" {
+				q := ""
+				if quote != nil {
+					q = *quote
+				}
+				h.Mailer.SendAsync(adminEmail, "DevDesk — quote accepted by "+name,
+					notify.AcceptedBody(name, email, service, q))
+			} else {
+				h.Mailer.SendAsync(adminEmail, "DevDesk — request declined by "+name,
+					notify.DeclinedBody(name, email, service))
+			}
+		}
 	}
 
 	return c.JSON(fiber.Map{"ok": true, "status": newStatus})
 }
 
+// PortalRequests handles GET /api/portal/requests: returns the signed-in
 // user's own requests. Unclaimed rows whose email matches the user's
 // email are claimed (client_id set) on read.
 func (h *Handler) PortalRequests(c *fiber.Ctx) error {

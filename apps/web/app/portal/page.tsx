@@ -13,7 +13,9 @@ export default function PortalPage() {
   const [requests, setRequests] = useState<PortalRequest[] | null>(null);
   const [loadErr, setLoadErr] = useState("");
 
-  // Restore an existing session (e.g. account just created on /order).
+  // Restore an existing session (e.g. account just created on /order),
+  // then poll for updates so clients see quote/status changes without
+  // manually refreshing.
   useEffect(() => {
     (async () => {
       try {
@@ -32,6 +34,15 @@ export default function PortalPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!loggedIn) return;
+    const t = setInterval(() => {
+      loadRequests();
+    }, 30000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loggedIn]);
 
   async function loadRequests() {
     try {
@@ -59,7 +70,13 @@ export default function PortalPage() {
           body: JSON.stringify({ decision }),
         }
       );
-      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setLoadErr(data?.error ?? "Could not save your decision. Please try again.");
+        await loadRequests(); // resync UI with the true state
+        return;
+      }
+      setLoadErr("");
       setRequests((rs) =>
         rs
           ? rs.map((r) =>

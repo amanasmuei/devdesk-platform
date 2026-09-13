@@ -22,14 +22,25 @@ services:
         condition: service_healthy
     environment:
       PORT: 8080
-      DATABASE_URL: postgres://devdesk:${POSTGRES_PASSWORD}@db:5432/devdesk?sslmode=disable
+      DATABASE_URL: postgres://devdesk:${POSTGRES_PASSWORD:?set in .env}@db:5432/devdesk?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:?set in .env}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-amanasmuei@gmail.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set in .env}
       WEB_ORIGIN: ${WEB_ORIGIN:?set in .env}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
     expose:
       - "8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   web:
     build: ./apps/web

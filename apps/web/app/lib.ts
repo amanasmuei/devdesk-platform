@@ -32,6 +32,19 @@ export const STATUS_VALUES = [
   "declined",
 ] as const;
 
+// The one legal forward transition from each status. Client-owned
+// transitions (accept/decline) happen in the portal; the admin walks
+// the ladder one step at a time.
+export const NEXT_STATUS: Record<string, string> = {
+  submitted: "quoted",
+  quoted: "accepted", // manual override; normally the client accepts
+  accepted: "in_progress",
+  in_progress: "delivered",
+  delivered: "paid",
+  paid: "",
+  declined: "",
+};
+
 export function statusLabel(s: string): string {
   const map: Record<string, string> = {
     submitted: "Submitted",

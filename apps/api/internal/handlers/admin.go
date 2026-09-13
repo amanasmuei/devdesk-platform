@@ -1,11 +1,15 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+
+	"github.com/amanasmuei/devdesk-platform/apps/api/internal/notify"
 )
 
 // AdminListRequests handles GET /api/admin/requests: returns every
@@ -37,18 +41,62 @@ func (h *Handler) AdminListRequests(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"requests": out})
 }
 
-// adminUpdateInput lists the only fields an admin may update. Nil fields
-// are left untouched.
+// adminUpdateInput lists the only fields an admin may update. A present
+// but null field clears the column; an absent field leaves it untouched.
+// Fields are value types (not pointers) so that an explicit JSON null
+// still invokes UnmarshalJSON and records Set=true.
 type adminUpdateInput struct {
-	Status     *string  `json:"status"`
-	QuotePrice *float64 `json:"quote_price"`
-	QuoteDate  *string  `json:"quote_date"`
-	PreviewURL *string  `json:"preview_url"`
-	AdminNotes *string  `json:"admin_notes"`
+	Status     string       `json:"status"`
+	QuotePrice nullableNum  `json:"quote_price"`
+	QuoteDate  nullableStr  `json:"quote_date"`
+	PreviewURL nullableStr  `json:"preview_url"`
+	AdminNotes nullableStr  `json:"admin_notes"`
+}
+
+// nullableStr distinguishes "field absent" (Set=false) from "field set
+// to null/empty" (Set=true, Value=nil), so the admin panel can clear a
+// value without re-sending everything.
+type nullableStr struct {
+	Set   bool
+	Value *string
+}
+
+func (n *nullableStr) UnmarshalJSON(b []byte) error {
+	n.Set = true
+	if string(b) == "null" {
+		return nil
+	}
+	var v string
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	n.Value = &v
+	return nil
+}
+
+// nullableNum is nullableStr for numeric fields.
+type nullableNum struct {
+	Set   bool
+	Value *float64
+}
+
+func (n *nullableNum) UnmarshalJSON(b []byte) error {
+	n.Set = true
+	if string(b) == "null" {
+		return nil
+	}
+	var v float64
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	n.Value = &v
+	return nil
 }
 
 // AdminUpdateRequest handles PUT /api/admin/requests/:id: partial update
-// restricted to status, quote_price, quote_date, and admin_notes.
+// of status (one step up the ladder only), quote fields, preview URL,
+// and admin notes. Setting the status to quoted or delivered triggers a
+// best-effort client notification email.
 func (h *Handler) AdminUpdateRequest(c *fiber.Ctx) error {
 	id := c.Params("id")
 	if !isUUID(id) {
@@ -60,44 +108,103 @@ func (h *Handler) AdminUpdateRequest(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid request body")
 	}
 
-	sets := make([]string, 0, 4)
-	args := make([]any, 0, 5)
+	sets := make([]string, 0, 5)
+	args := make([]any, 0, 6)
 	add := func(column string, value any) {
 		args = append(args, value)
 		sets = append(sets, fmt.Sprintf("%s = $%d", column, len(args)))
 	}
 
-	if in.Status != nil {
-		status := strings.TrimSpace(*in.Status)
-		if !validStatuses[status] {
-			return fiber.NewError(fiber.StatusBadRequest,
-				"status must be one of submitted, quoted, in_progress, delivered, declined")
+	// Load current row for transition validation and notifications.
+	var (
+		curStatus string
+		name      string
+		email     string
+		service   string
+		curPrice  *string
+		curDate   *string
+	)
+	err := h.DB.QueryRow(c.Context(),
+		`SELECT status, name, email, service, quote_price::text, quote_date::text
+		 FROM requests WHERE id = $1`, id,
+	).Scan(&curStatus, &name, &email, &service, &curPrice, &curDate)
+	if err != nil {
+		return fiber.NewError(fiber.StatusNotFound, "request not found")
+	}
+
+	newStatus := curStatus
+	if in.Status != "" {
+		status := strings.TrimSpace(in.Status)
+		if !validStatus(status) {
+			return fiber.NewError(fiber.StatusBadRequest, "unknown status: "+status)
+		}
+		if status != curStatus {
+			// The client-owned transitions (accept/decline) are never done
+			// by the admin; the admin walks the forward ladder one step at
+			// a time.
+			if adminNext[curStatus] != status {
+				return fiber.NewError(fiber.StatusConflict,
+					"cannot move a "+curStatus+" request to "+status+
+						"; allowed next status is "+adminNext[curStatus])
+			}
+			newStatus = status
 		}
 		add("status", status)
 	}
-	if in.QuotePrice != nil {
-		if *in.QuotePrice < 0 {
-			return fiber.NewError(fiber.StatusBadRequest, "quote_price must be non-negative")
+
+	var newPrice, newDate *string
+	if in.QuotePrice.Set {
+		if in.QuotePrice.Value == nil {
+			newPrice = nil // cleared
+		} else {
+			if *in.QuotePrice.Value < 0 {
+				return fiber.NewError(fiber.StatusBadRequest, "quote_price must be non-negative")
+			}
+			v := *in.QuotePrice.Value
+			s := strconv.FormatFloat(v, 'f', -1, 64)
+			newPrice = &s
 		}
-		add("quote_price", *in.QuotePrice)
+		add("quote_price", nullableVal(newPrice))
 	}
-	if in.QuoteDate != nil {
-		quoteDate := strings.TrimSpace(*in.QuoteDate)
-		if _, err := time.Parse("2006-01-02", quoteDate); err != nil {
-			return fiber.NewError(fiber.StatusBadRequest, "quote_date must be formatted YYYY-MM-DD")
+	if in.QuoteDate.Set {
+		if in.QuoteDate.Value == nil || strings.TrimSpace(*in.QuoteDate.Value) == "" {
+			newDate = nil
+		} else {
+			d := strings.TrimSpace(*in.QuoteDate.Value)
+			if _, err := time.Parse("2006-01-02", d); err != nil {
+				return fiber.NewError(fiber.StatusBadRequest, "quote_date must be formatted YYYY-MM-DD")
+			}
+			newDate = &d
 		}
-		add("quote_date", quoteDate)
+		add("quote_date", nullableVal(newDate))
 	}
-	if in.PreviewURL != nil {
-		add("preview_url", strings.TrimSpace(*in.PreviewURL))
+	if in.PreviewURL.Set {
+		if in.PreviewURL.Value == nil {
+			add("preview_url", nil)
+		} else {
+			u := strings.TrimSpace(*in.PreviewURL.Value)
+			if !isSafePreviewURL(u) {
+				return fiber.NewError(fiber.StatusBadRequest,
+					"preview_url must be an absolute http(s) URL")
+			}
+			if u == "" {
+				add("preview_url", nil)
+			} else {
+				add("preview_url", u)
+			}
+		}
 	}
-	if in.AdminNotes != nil {
-		add("admin_notes", *in.AdminNotes)
+	if in.AdminNotes.Set {
+		if in.AdminNotes.Value == nil {
+			add("admin_notes", nil)
+		} else {
+			add("admin_notes", *in.AdminNotes.Value)
+		}
 	}
 
 	if len(sets) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest,
-			"provide at least one of status, quote_price, quote_date, admin_notes")
+			"provide at least one of status, quote_price, quote_date, preview_url, admin_notes")
 	}
 
 	args = append(args, id)
@@ -114,5 +221,41 @@ func (h *Handler) AdminUpdateRequest(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusNotFound, "request not found")
 	}
 
-	return c.JSON(fiber.Map{"ok": true})
+	// Best-effort client notifications on the two client-facing events.
+	if h.Mailer != nil && h.Mailer.Enabled() && newStatus != curStatus {
+		switch newStatus {
+		case "quoted":
+			price, date := "", ""
+			if newPrice != nil {
+				price = *newPrice
+			} else if curPrice != nil {
+				price = *curPrice
+			}
+			if newDate != nil {
+				date = *newDate
+			} else if curDate != nil {
+				date = *curDate
+			}
+			h.Mailer.SendAsync(email, "DevDesk — your quote is ready",
+				notify.QuoteBody(name, service, price, date))
+		case "delivered":
+			p := ""
+			if in.PreviewURL.Set && in.PreviewURL.Value != nil {
+				p = strings.TrimSpace(*in.PreviewURL.Value)
+			}
+			h.Mailer.SendAsync(email, "DevDesk — your work is ready",
+				notify.DeliveredBody(name, service, p))
+		}
+	}
+
+	return c.JSON(fiber.Map{"ok": true, "status": newStatus})
+}
+
+// nullableVal converts a *string to any for pgx query args (nil clears
+// the column).
+func nullableVal(s *string) any {
+	if s == nil {
+		return nil
+	}
+	return *s
 }

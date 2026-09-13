@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { API_URL, AdminRequest, STATUS_VALUES, statusLabel } from "../lib";
+import { API_URL, AdminRequest, NEXT_STATUS, statusLabel } from "../lib";
 
 type Draft = {
   status: string;
@@ -31,6 +31,30 @@ export default function AdminPage() {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [saveState, setSaveState] = useState<Record<string, string>>({});
   const [loadErr, setLoadErr] = useState("");
+  // False until the /api/auth/me session probe finishes; avoids flashing
+  // the login form for an already-signed-in admin.
+  const [booted, setBooted] = useState(false);
+
+  // Restore an existing admin session on page load / refresh.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/auth/me`, {
+          credentials: "include",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.is_admin) {
+            await loadRequests();
+          }
+        }
+      } catch {
+        // not logged in; show the login form
+      }
+      setBooted(true);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadRequests() {
     try {
@@ -66,7 +90,12 @@ export default function AdminPage() {
         body: JSON.stringify({ email: email.trim(), password }),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok || (data?.role !== "admin" && !data?.is_admin)) {
+      if (!res.ok) {
+        setErr(data?.error ?? "Login failed. Check your email and password.");
+        setBusy(false);
+        return;
+      }
+      if (!data?.is_admin) {
         setErr("Admin access required.");
         setBusy(false);
         return;
@@ -89,14 +118,18 @@ export default function AdminPage() {
       };
       body.quote_price = d.quote_price === "" ? null : Number(d.quote_price);
       body.quote_date = d.quote_date === "" ? null : d.quote_date;
-      body.preview_url = d.preview_url;
+      body.preview_url = d.preview_url === "" ? null : d.preview_url;
       const res = await fetch(`${API_URL}/api/admin/requests/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        // Surface the server's message (e.g. transition rules, bad URL).
+        throw new Error(data?.error ?? `Save failed (${res.status})`);
+      }
       setSaveState((s) => ({ ...s, [String(id)]: "Saved" }));
       setRequests((rs) =>
         rs
@@ -123,8 +156,11 @@ export default function AdminPage() {
           }),
         2500
       );
-    } catch {
-      setSaveState((s) => ({ ...s, [String(id)]: "Save failed — retry" }));
+    } catch (e) {
+      setSaveState((s) => ({
+        ...s,
+        [String(id)]: (e instanceof Error && e.message) || "Save failed — retry",
+      }));
     }
   }
 
@@ -135,7 +171,7 @@ export default function AdminPage() {
     }));
   }
 
-  if (!requests && !loadErr) {
+  if (!booted || (!requests && !loadErr)) {
     return (
       <main className="panel">
         <nav className="nav">
@@ -233,9 +269,12 @@ export default function AdminPage() {
                     value={d.status}
                     onChange={(e) => update(id, { status: e.target.value })}
                   >
-                    {STATUS_VALUES.map((s) => (
+                    {/* Current status plus the one legal next step; the
+                        API rejects anything else with a 409. */}
+                    {[r.status, NEXT_STATUS[r.status]].filter(Boolean).map((s) => (
                       <option key={s} value={s}>
                         {statusLabel(s)}
+                        {s !== r.status ? " (next step)" : ""}
                       </option>
                     ))}
                   </select>

@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+
+	"github.com/amanasmuei/devdesk-platform/apps/api/internal/notify"
 )
 
 // createRequestInput lists the only fields a public submitter may set.
@@ -34,10 +36,13 @@ func (h *Handler) CreateRequest(c *fiber.Ctx) error {
 	if in.Name == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "name is required")
 	}
+	if len(in.Name) > 200 {
+		return fiber.NewError(fiber.StatusBadRequest, "name must be at most 200 characters")
+	}
 	if in.Email == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "email is required")
 	}
-	if _, err := mail.ParseAddress(in.Email); err != nil {
+	if _, err := mail.ParseAddress(in.Email); err != nil || len(in.Email) > 320 {
 		return fiber.NewError(fiber.StatusBadRequest, "email is not a valid address")
 	}
 	if in.Service == "" {
@@ -62,6 +67,17 @@ func (h *Handler) CreateRequest(c *fiber.Ctx) error {
 	).Scan(&id)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to create request")
+	}
+
+	// Best-effort notifications; never fail the request over email.
+	if h.Mailer != nil && h.Mailer.Enabled() {
+		h.Mailer.SendAsync(in.Email, "DevDesk — we got your request",
+			notify.NewRequestClientBody(in.Name, in.Service))
+
+		if adminEmail, _ := c.Locals("adminEmail").(string); adminEmail != "" {
+			h.Mailer.SendAsync(adminEmail, "DevDesk — new request from "+in.Name,
+				notify.NewRequestAdminBody(in.Name, in.Email, in.Service, in.Urgency, in.Details, id))
+		}
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"id": id, "status": "submitted"})

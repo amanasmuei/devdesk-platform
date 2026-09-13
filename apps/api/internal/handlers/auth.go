@@ -38,6 +38,15 @@ func (h *Handler) Login(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusUnauthorized, "invalid email or password")
 	}
 
+	// Claim any anonymous wizard submissions made with this email so the
+	// portal shows them immediately after login.
+	if _, err := h.DB.Exec(c.Context(),
+		"UPDATE requests SET client_id = $1 WHERE email = $2 AND client_id IS NULL",
+		id, in.Email,
+	); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to link requests")
+	}
+
 	token, err := auth.GenerateToken(id, in.Email, isAdmin, h.JWTSecret, auth.SessionTTL)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to create session")

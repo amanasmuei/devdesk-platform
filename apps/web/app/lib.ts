@@ -11,6 +11,7 @@ export interface PortalRequest {
   status: string;
   quote_price: number | null;
   quote_date: string | null;
+  preview_url?: string | null;
   created_at?: string;
   urgency?: string;
 }
@@ -24,8 +25,10 @@ export interface AdminRequest extends PortalRequest {
 export const STATUS_VALUES = [
   "submitted",
   "quoted",
+  "accepted",
   "in_progress",
   "delivered",
+  "paid",
   "declined",
 ] as const;
 
@@ -33,8 +36,10 @@ export function statusLabel(s: string): string {
   const map: Record<string, string> = {
     submitted: "Submitted",
     quoted: "Quoted",
+    accepted: "Accepted",
     in_progress: "In progress",
     delivered: "Delivered",
+    paid: "Paid",
     declined: "Declined",
   };
   return map[s] ?? s;

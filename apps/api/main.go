@@ -141,6 +141,7 @@ func main() {
 
 	// Client portal routes.
 	app.Get("/api/portal/requests", middleware.RequireAuth(jwtSecret), h.PortalRequests)
+	app.Post("/api/portal/requests/:id/decision", middleware.RequireAuth(jwtSecret), h.ClientDecide)
 
 	// Admin routes.
 	app.Get("/api/admin/requests", middleware.RequireAuth(jwtSecret), middleware.RequireAdmin, h.AdminListRequests)

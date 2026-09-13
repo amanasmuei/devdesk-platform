@@ -8,6 +8,7 @@ type Draft = {
   status: string;
   quote_price: string;
   quote_date: string;
+  preview_url: string;
   admin_notes: string;
 };
 
@@ -16,6 +17,7 @@ function toDraft(r: AdminRequest): Draft {
     status: r.status ?? "submitted",
     quote_price: r.quote_price != null ? String(r.quote_price) : "",
     quote_date: r.quote_date ? r.quote_date.slice(0, 10) : "",
+    preview_url: r.preview_url ?? "",
     admin_notes: r.admin_notes ?? "",
   };
 }
@@ -87,6 +89,7 @@ export default function AdminPage() {
       };
       body.quote_price = d.quote_price === "" ? null : Number(d.quote_price);
       body.quote_date = d.quote_date === "" ? null : d.quote_date;
+      body.preview_url = d.preview_url;
       const res = await fetch(`${API_URL}/api/admin/requests/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -255,6 +258,15 @@ export default function AdminPage() {
                     type="date"
                     value={d.quote_date}
                     onChange={(e) => update(id, { quote_date: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label>Preview link</label>
+                  <input
+                    type="url"
+                    value={d.preview_url}
+                    onChange={(e) => update(id, { preview_url: e.target.value })}
+                    placeholder="https://… (shown to client when delivered)"
                   />
                 </div>
               </div>

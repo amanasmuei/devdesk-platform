@@ -577,6 +577,35 @@ textarea {
   font-weight: 700;
   font-size: 0.94rem;
 }
+.badge.accepted {
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.45);
+}
+.badge.paid {
+  color: #4ade80;
+  border-color: rgba(74, 222, 128, 0.6);
+  background: rgba(74, 222, 128, 0.08);
+}
+.preview-link {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--accent, #7ea6ff);
+  font-size: 0.88rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+.preview-link:hover {
+  text-decoration: underline;
+}
+.decision {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.decision .btn {
+  padding: 8px 14px;
+  font-size: 0.85rem;
+}
 .empty {
   color: var(--faint);
   text-align: center;

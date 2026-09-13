@@ -13,7 +13,7 @@ import (
 func (h *Handler) AdminListRequests(c *fiber.Ctx) error {
 	rows, err := h.DB.Query(c.Context(), `
 		SELECT id, email, name, service, urgency, details, status,
-		       quote_price::text, quote_date::text, admin_notes, created_at, updated_at
+		       quote_price::text, quote_date::text, preview_url, admin_notes, created_at, updated_at
 		FROM requests
 		ORDER BY created_at DESC`)
 	if err != nil {
@@ -25,7 +25,7 @@ func (h *Handler) AdminListRequests(c *fiber.Ctx) error {
 	for rows.Next() {
 		var r requestRow
 		if err := rows.Scan(&r.ID, &r.Email, &r.Name, &r.Service, &r.Urgency, &r.Details,
-			&r.Status, &r.QuotePrice, &r.QuoteDate, &r.AdminNotes, &r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.Status, &r.QuotePrice, &r.QuoteDate, &r.PreviewURL, &r.AdminNotes, &r.CreatedAt, &r.UpdatedAt); err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "failed to read requests")
 		}
 		out = append(out, r)
@@ -43,6 +43,7 @@ type adminUpdateInput struct {
 	Status     *string  `json:"status"`
 	QuotePrice *float64 `json:"quote_price"`
 	QuoteDate  *string  `json:"quote_date"`
+	PreviewURL *string  `json:"preview_url"`
 	AdminNotes *string  `json:"admin_notes"`
 }
 
@@ -86,6 +87,9 @@ func (h *Handler) AdminUpdateRequest(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadRequest, "quote_date must be formatted YYYY-MM-DD")
 		}
 		add("quote_date", quoteDate)
+	}
+	if in.PreviewURL != nil {
+		add("preview_url", strings.TrimSpace(*in.PreviewURL))
 	}
 	if in.AdminNotes != nil {
 		add("admin_notes", *in.AdminNotes)

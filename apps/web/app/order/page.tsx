@@ -54,6 +54,11 @@ export default function OrderPage() {
   const [err, setErr] = useState("");
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
+  const [password, setPassword] = useState("");
+  const [accountState, setAccountState] = useState<
+    "idle" | "creating" | "created" | "exists" | "skip" | "error"
+  >("idle");
+  const [accountErr, setAccountErr] = useState("");
 
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
@@ -90,6 +95,32 @@ export default function OrderPage() {
     }
   }
 
+  async function createAccount() {
+    if (password.length < 8) {
+      setAccountErr("Password must be at least 8 characters.");
+      return;
+    }
+    setAccountErr("");
+    setAccountState("creating");
+    try {
+      const res = await fetch(`${API_URL}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: email.trim(), password }),
+      });
+      if (res.status === 409) {
+        setAccountState("exists");
+        return;
+      }
+      if (!res.ok) throw new Error(String(res.status));
+      setAccountState("created");
+    } catch {
+      setAccountState("error");
+      setAccountErr("Could not create the account. You can retry or use the portal later.");
+    }
+  }
+
   if (done) {
     return (
       <main className="wrap" style={{ paddingTop: 72, paddingBottom: 96 }}>
@@ -103,6 +134,91 @@ export default function OrderPage() {
               Sit tight — you&apos;ve done your part.
             </p>
           </div>
+
+          {accountState === "idle" && (
+            <div className="post-submit" style={{ marginTop: 28 }}>
+              <div className="q" style={{ fontSize: "1.05rem" }}>
+                Track this request live in the client portal
+              </div>
+              <div className="qhelp" style={{ marginBottom: 12 }}>
+                Set a password for {email.trim()} to see your quote, accept
+                or decline it, and follow progress — all in writing.
+              </div>
+              <label className="field">
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Choose a password (8+ characters)"
+                />
+              </label>
+              <div className="err">{accountErr}</div>
+              <div className="wizard-actions">
+                <button
+                  className="wbtn wbtn-next"
+                  onClick={createAccount}
+                >
+                  Create password
+                </button>
+                <button
+                  className="wbtn"
+                  onClick={() => setAccountState("skip")}
+                >
+                  No thanks
+                </button>
+              </div>
+            </div>
+          )}
+
+          {accountState === "creating" && (
+            <div className="post-submit" style={{ marginTop: 24 }}>
+              <div className="qhelp">Creating your account…</div>
+            </div>
+          )}
+
+          {accountState === "created" && (
+            <div className="post-submit" style={{ marginTop: 24 }}>
+              <p style={{ marginBottom: 12 }}>
+                Account created. Your request is already linked.
+              </p>
+              <Link className="btn btn-primary" href="/portal">
+                Go to your portal
+              </Link>
+            </div>
+          )}
+
+          {(accountState === "exists" || accountState === "skip") && (
+            <div className="post-submit" style={{ marginTop: 24 }}>
+              {accountState === "exists" ? (
+                <p style={{ marginBottom: 12 }}>
+                  An account with this email already exists — log in to see
+                  this request.
+                </p>
+              ) : (
+                <p style={{ marginBottom: 12 }}>
+                  No problem — your quote will arrive by email. You can
+                  create a portal account any time.
+                </p>
+              )}
+              <Link className="btn btn-ghost" href="/portal">
+                Client portal
+              </Link>
+            </div>
+          )}
+
+          {accountState === "error" && (
+            <div className="post-submit" style={{ marginTop: 24 }}>
+              <div className="err">{accountErr}</div>
+              <div className="wizard-actions" style={{ marginTop: 10 }}>
+                <button className="wbtn wbtn-next" onClick={createAccount}>
+                  Retry
+                </button>
+                <button className="wbtn" onClick={() => setAccountState("skip")}>
+                  Skip for now
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </main>
     );

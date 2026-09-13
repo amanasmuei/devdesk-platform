@@ -26,6 +26,7 @@ type requestRow struct {
 	Status     string    `json:"status"`
 	QuotePrice *string   `json:"quote_price"`
 	QuoteDate  *string   `json:"quote_date"`
+	PreviewURL *string   `json:"preview_url,omitempty"`
 	AdminNotes *string   `json:"admin_notes,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
@@ -41,7 +42,9 @@ func isUUID(s string) bool {
 var validStatuses = map[string]bool{
 	"submitted":   true,
 	"quoted":      true,
+	"accepted":    true,
 	"in_progress": true,
 	"delivered":   true,
+	"paid":        true,
 	"declined":    true,
 }

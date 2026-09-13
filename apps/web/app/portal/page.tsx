@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { API_URL, PortalRequest, statusLabel } from "../lib";
 
@@ -12,6 +12,26 @@ export default function PortalPage() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [requests, setRequests] = useState<PortalRequest[] | null>(null);
   const [loadErr, setLoadErr] = useState("");
+
+  // Restore an existing session (e.g. account just created on /order).
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/auth/me`, {
+          credentials: "include",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (data && !data.is_admin) {
+          setLoggedIn(true);
+          await loadRequests();
+        }
+      } catch {
+        // not logged in; show the login form
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadRequests() {
     try {
@@ -27,6 +47,45 @@ export default function PortalPage() {
   }
 
   const [mode, setMode] = useState<"login" | "register">("login");
+
+  async function decide(id: string | number, decision: "accept" | "decline") {
+    try {
+      const res = await fetch(
+        `${API_URL}/api/portal/requests/${id}/decision`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ decision }),
+        }
+      );
+      if (!res.ok) throw new Error(String(res.status));
+      setRequests((rs) =>
+        rs
+          ? rs.map((r) =>
+              String(r.id) === String(id)
+                ? { ...r, status: decision === "accept" ? "accepted" : "declined" }
+                : r
+            )
+          : rs
+      );
+    } catch {
+      setLoadErr("Could not save your decision. Please try again.");
+    }
+  }
+
+  async function logout() {
+    try {
+      await fetch(`${API_URL}/api/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch {
+      // ignore network errors on logout
+    }
+    setLoggedIn(false);
+    setRequests(null);
+  }
 
   async function authFetch(path: string) {
     return fetch(`${API_URL}${path}`, {
@@ -140,7 +199,7 @@ export default function PortalPage() {
         <Link className="wordmark" href="/">
           DevDesk
         </Link>
-        <button className="logout-btn" onClick={() => setLoggedIn(false)}>
+        <button className="logout-btn" onClick={logout}>
           Log out
         </button>
       </div>
@@ -182,6 +241,34 @@ export default function PortalPage() {
                 )}
                 {r.quote_price == null && !r.quote_date && (
                   <div className="dt">Quote pending</div>
+                )}
+                {r.preview_url && (
+                  <a
+                    className="preview-link"
+                    href={r.preview_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    View the work
+                  </a>
+                )}
+                {(r.status === "quoted" || r.status === "submitted") && (
+                  <div className="decision" style={{ marginTop: 10 }}>
+                    {r.status === "quoted" && (
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => decide(r.id, "accept")}
+                      >
+                        Accept quote
+                      </button>
+                    )}
+                    <button
+                      className="btn btn-ghost"
+                      onClick={() => decide(r.id, "decline")}
+                    >
+                      Decline
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

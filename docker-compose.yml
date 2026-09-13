@@ -1,0 +1,63 @@
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: devdesk
+      POSTGRES_USER: devdesk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devdesk -d devdesk"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./apps/api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://devdesk:${POSTGRES_PASSWORD}@db:5432/devdesk?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?set in .env}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-amanasmuei@gmail.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?set in .env}
+      WEB_ORIGIN: ${WEB_ORIGIN:?set in .env}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+    expose:
+      - "8080"
+
+  web:
+    build: ./apps/web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      API_URL: http://api:8080
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - web
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  db_data:
+  caddy_data:
+  caddy_config:

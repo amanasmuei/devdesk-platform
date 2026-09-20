@@ -31,7 +31,7 @@ const services = [
 const steps = [
   {
     title: "Describe it",
-    body: "Answer four quick questions in the request form. Paste errors, sketch ideas, or write it in plain words.",
+    body: "Answer three quick questions in the request form. Paste errors, sketch ideas, or write it in plain words.",
   },
   {
     title: "Get a fixed quote",

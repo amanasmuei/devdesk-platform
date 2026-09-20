@@ -52,7 +52,7 @@ def check(label, cond, detail=""):
 
 # --- 1. Original full ladder ---
 r = curl("POST", "/api/requests", {
-    "name": "Sara Client", "email": "sara3+1789306250@test.com",
+    "name": "Sara Client", "email": f"sara3+{UNIQ}@test.com",
     "service": "Website / landing page", "urgency": "ASAP — within days",
     "details": "Landing page for my bakery business"})
 rid = r.get("id")
@@ -69,7 +69,7 @@ r = curl("PUT", f"/api/admin/requests/{rid}",
          cookie_file="/tmp/e2e-admin.txt")
 check("2. quote set", r.get("ok") is True, str(r))
 
-r = curl("POST", "/api/auth/register", {"email": "sara3+1789306250@test.com", "password": "sara-pass-123"},
+r = curl("POST", "/api/auth/register", {"email": f"sara3+{UNIQ}@test.com", "password": "sara-pass-123"},
          cookie_save="/tmp/e2e-sara.txt")
 data = curl("GET", "/api/portal/requests", cookie_file="/tmp/e2e-sara.txt")
 req = data["requests"][0]

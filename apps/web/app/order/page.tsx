@@ -1,8 +1,17 @@
 "use client";
 
 import { useState } from "react";
+import type { FormEvent } from "react";
 import Link from "next/link";
 import { API_URL } from "../lib";
+import {
+  Button,
+  ErrorBanner,
+  Field,
+  LoadingState,
+  PageShell,
+  ProgressSteps,
+} from "../components";
 
 const SERVICE_CHOICES = [
   {
@@ -51,7 +60,10 @@ export default function OrderPage() {
   const [urgency, setUrgency] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [err, setErr] = useState("");
+  const [nameErr, setNameErr] = useState("");
+  const [emailErr, setEmailErr] = useState("");
+  const [detailsErr, setDetailsErr] = useState("");
+  const [submitErr, setSubmitErr] = useState("");
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
   const [password, setPassword] = useState("");
@@ -63,23 +75,33 @@ export default function OrderPage() {
   const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 
   async function submit() {
-    if (!name.trim()) {
-      setErr("Please tell us your name.");
-      return;
+    const nameTrimmed = name.trim();
+    const emailTrimmed = email.trim();
+    let valid = true;
+
+    if (!nameTrimmed) {
+      setNameErr("Please tell us your name.");
+      valid = false;
+    } else {
+      setNameErr("");
     }
     if (!emailOk) {
-      setErr("That email doesn't look right.");
-      return;
+      setEmailErr("That email doesn't look right.");
+      valid = false;
+    } else {
+      setEmailErr("");
     }
-    setErr("");
+    if (!valid) return;
+
+    setSubmitErr("");
     setSending(true);
     try {
       const res = await fetch(`${API_URL}/api/requests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: name.trim(),
-          email: email.trim(),
+          name: nameTrimmed,
+          email: emailTrimmed,
           service,
           urgency,
           details,
@@ -88,7 +110,7 @@ export default function OrderPage() {
       if (!res.ok) throw new Error(String(res.status));
       setDone(true);
     } catch {
-      setErr(
+      setSubmitErr(
         "Something went wrong sending your request. Please try again, or email us directly at amanasmuei@gmail.com."
       );
       setSending(false);
@@ -117,17 +139,35 @@ export default function OrderPage() {
       setAccountState("created");
     } catch {
       setAccountState("error");
-      setAccountErr("Could not create the account. You can retry or use the portal later.");
+      setAccountErr(
+        "Could not create the account. You can retry or use the portal later."
+      );
+    }
+  }
+
+  function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (step === 1) {
+      if (details.trim().length < 10) {
+        setDetailsErr("A sentence or two is all we need.");
+        return;
+      }
+      setDetailsErr("");
+      setStep(2);
+      return;
+    }
+    if (step === 3) {
+      void submit();
     }
   }
 
   if (done) {
     return (
-      <main className="wrap" style={{ paddingTop: 72, paddingBottom: 96 }}>
+      <PageShell variant="wrap">
         <div className="wizard-shell">
           <div className="success">
-            <div className="ring">&#10003;</div>
-            <h3>Request sent, {name.trim().split(" ")[0]}</h3>
+            <div className="ring" aria-hidden="true">&#10003;</div>
+            <h1>Request sent, {name.trim().split(" ")[0]}</h1>
             <p>
               Check your inbox within 24 hours for your fixed quote.
               <br />
@@ -135,252 +175,317 @@ export default function OrderPage() {
             </p>
           </div>
 
-          {accountState === "idle" && (
-            <div className="post-submit" style={{ marginTop: 28 }}>
-              <div className="q" style={{ fontSize: "1.05rem" }}>
-                Track this request live in the client portal
-              </div>
-              <div className="qhelp" style={{ marginBottom: 12 }}>
-                Set a password for {email.trim()} to see your quote, accept
-                or decline it, and follow progress — all in writing.
-              </div>
-              <label className="field">
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Choose a password (8+ characters)"
-                />
-              </label>
-              <div className="err">{accountErr}</div>
-              <div className="wizard-actions">
-                <button
-                  className="wbtn wbtn-next"
-                  onClick={createAccount}
-                >
-                  Create password
-                </button>
-                <button
-                  className="wbtn"
-                  onClick={() => setAccountState("skip")}
-                >
-                  No thanks
-                </button>
-              </div>
-            </div>
-          )}
+          <p className="back-link">
+            <Link className="link" href="/">
+              Back to site
+            </Link>
+          </p>
 
-          {accountState === "creating" && (
-            <div className="post-submit" style={{ marginTop: 24 }}>
-              <div className="qhelp">Creating your account…</div>
-            </div>
-          )}
+          <div className="next-step">
+            <div className="step-label">Optional next step</div>
 
-          {accountState === "created" && (
-            <div className="post-submit" style={{ marginTop: 24 }}>
-              <p style={{ marginBottom: 12 }}>
-                Account created. Your request is already linked.
-              </p>
-              <Link className="btn btn-primary" href="/portal">
-                Go to your portal
-              </Link>
-            </div>
-          )}
+            {accountState === "idle" && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void createAccount();
+                }}
+                noValidate
+              >
+                <div className="post-submit">
+                  <div className="q">
+                    Track this request live in the client portal
+                  </div>
+                  <div className="qhelp">
+                    Set a password for {email.trim()} to see your quote,
+                    accept or decline it, and follow progress — all in
+                    writing.
+                  </div>
+                  <Field
+                    id="account-password"
+                    label="Create a portal password"
+                    error={accountErr}
+                  >
+                    {(id, props) => (
+                      <input
+                        {...props}
+                        id={id}
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="8+ characters"
+                      />
+                    )}
+                  </Field>
+                  <div className="post-submit-actions">
+                    <Button type="submit" variant="primary">
+                      Create password
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setAccountState("skip")}
+                    >
+                      No thanks
+                    </Button>
+                  </div>
+                </div>
+              </form>
+            )}
 
-          {(accountState === "exists" || accountState === "skip") && (
-            <div className="post-submit" style={{ marginTop: 24 }}>
-              {accountState === "exists" ? (
-                <p style={{ marginBottom: 12 }}>
-                  An account with this email already exists — log in to see
-                  this request.
-                </p>
-              ) : (
-                <p style={{ marginBottom: 12 }}>
-                  No problem — your quote will arrive by email. You can
-                  create a portal account any time.
-                </p>
-              )}
-              <Link className="btn btn-ghost" href="/portal">
-                Client portal
-              </Link>
-            </div>
-          )}
-
-          {accountState === "error" && (
-            <div className="post-submit" style={{ marginTop: 24 }}>
-              <div className="err">{accountErr}</div>
-              <div className="wizard-actions" style={{ marginTop: 10 }}>
-                <button className="wbtn wbtn-next" onClick={createAccount}>
-                  Retry
-                </button>
-                <button className="wbtn" onClick={() => setAccountState("skip")}>
-                  Skip for now
-                </button>
+            {accountState === "creating" && (
+              <div className="post-submit">
+                <LoadingState>Creating your account…</LoadingState>
               </div>
-            </div>
-          )}
+            )}
+
+            {accountState === "created" && (
+              <div className="post-submit">
+                <p>Account created. Your request is already linked.</p>
+                <Button variant="primary" href="/portal">
+                  Go to your portal
+                </Button>
+              </div>
+            )}
+
+            {(accountState === "exists" || accountState === "skip") && (
+              <div className="post-submit">
+                {accountState === "exists" ? (
+                  <p>
+                    An account with this email already exists — log in to
+                    see this request.
+                  </p>
+                ) : (
+                  <p>
+                    No problem — your quote will arrive by email. You can
+                    create a portal account any time.
+                  </p>
+                )}
+                <Button variant="ghost" href="/portal">
+                  Client portal
+                </Button>
+              </div>
+            )}
+
+            {accountState === "error" && (
+              <div className="post-submit">
+                <ErrorBanner>{accountErr}</ErrorBanner>
+                <div className="post-submit-actions">
+                  <Button
+                    variant="primary"
+                    onClick={() => void createAccount()}
+                  >
+                    Retry
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => setAccountState("skip")}
+                  >
+                    Skip for now
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
-      </main>
+      </PageShell>
     );
   }
 
   return (
-    <main className="wrap" style={{ paddingTop: 72, paddingBottom: 96 }}>
-      <nav className="nav" style={{ marginBottom: 40 }}>
+    <PageShell variant="wrap">
+      <nav className="nav nav-page">
         <div className="nav-inner">
           <Link className="wordmark" href="/">
             DevDesk
           </Link>
-          <Link className="btn btn-ghost" href="/">
+          <Button variant="ghost" href="/">
             Back to site
-          </Link>
+          </Button>
         </div>
       </nav>
 
-      <div className="section-sub" style={{ marginBottom: 40, marginTop: 0 }}>
+      <p className="wizard-intro">
         Takes about 60 seconds. Your quote arrives by email within 24 hours.
-      </div>
+      </p>
 
       <div className="wizard-shell">
-        <div className="progress">
-          <div
-            className="bar"
-            style={{ width: `${(step / TOTAL) * 100}%` }}
-          ></div>
-        </div>
+        <ProgressSteps step={step} total={TOTAL} />
 
-        {step === 0 && (
-          <div>
-            <div className="step-label">Step 1 of 4</div>
-            <div className="q">What do you need help with?</div>
-            <div className="qhelp">
-              Pick the closest match — details come next.
+        <form onSubmit={handleSubmit} noValidate>
+          {step === 0 && (
+            <div>
+              <div className="step-label">Step 1 of 4</div>
+              <h1 className="q">What do you need help with?</h1>
+              <div className="qhelp">
+                Pick the closest match — details come next.
+              </div>
+              <div className="choices">
+                {SERVICE_CHOICES.map((c) => (
+                  <button
+                    type="button"
+                    className="choice"
+                    key={c.val}
+                    aria-selected={service === c.val}
+                    onClick={() => {
+                      setService(c.val);
+                      setStep(1);
+                    }}
+                  >
+                    <span>
+                      {c.label}
+                      <small>{c.small}</small>
+                    </span>
+                    <span>&rarr;</span>
+                  </button>
+                ))}
+              </div>
             </div>
-            <div className="choices">
-              {SERVICE_CHOICES.map((c) => (
-                <button
-                  className="choice"
-                  key={c.val}
-                  onClick={() => {
-                    setService(c.val);
-                    setStep(1);
-                  }}
-                >
-                  <span>
-                    {c.label}
-                    <small>{c.small}</small>
-                  </span>
-                  <span>&rarr;</span>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+          )}
 
-        {step === 1 && (
-          <div>
-            <div className="step-label">Step 2 of 4</div>
-            <div className="q">Tell us what&apos;s going on.</div>
-            <div className="qhelp">
-              Plain words are perfect. Paste error messages if you have them.
-            </div>
-            <textarea
-              value={details}
-              onChange={(e) => setDetails(e.target.value)}
-              placeholder="e.g. My Python script crashes with a KeyError after a few minutes. It worked before. I need it fixed by Friday."
-            />
-            <div className="err">{err}</div>
-            <div className="wizard-actions">
-              <button className="wbtn" onClick={() => setStep(0)}>
-                Back
-              </button>
-              <button
-                className="wbtn wbtn-next"
-                onClick={() => {
-                  if (details.trim().length < 10) {
-                    setErr("A sentence or two is all we need.");
-                    return;
-                  }
-                  setErr("");
-                  setStep(2);
-                }}
+          {step === 1 && (
+            <div>
+              <div className="step-label">Step 2 of 4</div>
+              <h1 className="q">Tell us what&apos;s going on.</h1>
+              <Field
+                id="details"
+                label="Describe the problem"
+                hint="Plain words are perfect. Paste error messages if you have them."
+                error={detailsErr}
               >
-                Continue
-              </button>
-            </div>
-          </div>
-        )}
-
-        {step === 2 && (
-          <div>
-            <div className="step-label">Step 3 of 4</div>
-            <div className="q">When do you need it?</div>
-            <div className="qhelp">Honest answers get honest schedules.</div>
-            <div className="choices">
-              {URGENCY_CHOICES.map((c) => (
-                <button
-                  className="choice"
-                  key={c.val}
-                  onClick={() => {
-                    setUrgency(c.val);
-                    setStep(3);
-                  }}
+                {(id, props) => (
+                  <textarea
+                    {...props}
+                    id={id}
+                    value={details}
+                    onChange={(e) => setDetails(e.target.value)}
+                    placeholder="e.g. My Python script crashes with a KeyError after a few minutes. It worked before. I need it fixed by Friday."
+                  />
+                )}
+              </Field>
+              <div className="wizard-actions">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setStep(0)}
                 >
-                  <span>
-                    {c.label}
-                    <small>{c.small}</small>
-                  </span>
-                  <span>&rarr;</span>
-                </button>
-              ))}
+                  Back
+                </Button>
+                <Button type="submit" variant="primary">
+                  Continue
+                </Button>
+              </div>
             </div>
-            <div className="wizard-actions">
-              <button className="wbtn" onClick={() => setStep(1)}>
-                Back
-              </button>
-            </div>
-          </div>
-        )}
+          )}
 
-        {step === 3 && (
-          <div>
-            <div className="step-label">Step 4 of 4</div>
-            <div className="q">Where should we send your quote?</div>
-            <div className="qhelp">
-              No spam, no newsletter — just your quote.
+          {step === 2 && (
+            <div>
+              <div className="step-label">Step 3 of 4</div>
+              <h1 className="q">When do you need it?</h1>
+              <div className="qhelp">Honest answers get honest schedules.</div>
+              <div className="choices">
+                {URGENCY_CHOICES.map((c) => (
+                  <button
+                    type="button"
+                    className="choice"
+                    key={c.val}
+                    aria-selected={urgency === c.val}
+                    onClick={() => {
+                      setUrgency(c.val);
+                      setStep(3);
+                    }}
+                  >
+                    <span>
+                      {c.label}
+                      <small>{c.small}</small>
+                    </span>
+                    <span>&rarr;</span>
+                  </button>
+                ))}
+              </div>
+              <div className="wizard-actions">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setStep(1)}
+                >
+                  Back
+                </Button>
+              </div>
             </div>
-            <label className="field">
-              <input
-                type="text"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Your name"
-              />
-            </label>
-            <label className="field">
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-              />
-            </label>
-            <div className="err">{err}</div>
-            <div className="wizard-actions">
-              <button className="wbtn" onClick={() => setStep(2)}>
-                Back
-              </button>
-              <button
-                className="wbtn wbtn-next"
-                onClick={submit}
-                disabled={sending}
-              >
-                {sending ? "Sending…" : "Get my free quote"}
-              </button>
+          )}
+
+          {step === 3 && (
+            <div>
+              <div className="step-label">Step 4 of 4</div>
+              <h1 className="q">Where should we send your quote?</h1>
+              <div className="qhelp">
+                No spam, no newsletter — just your quote.
+              </div>
+
+              <div className="review">
+                <div className="review-row">
+                  <span className="review-key">Service</span>
+                  <span className="review-val">{service}</span>
+                </div>
+                <div className="review-row">
+                  <span className="review-key">Details</span>
+                  <span className="review-val">{details}</span>
+                </div>
+                <div className="review-row">
+                  <span className="review-key">Timing</span>
+                  <span className="review-val">{urgency}</span>
+                </div>
+              </div>
+
+              <Field id="name" label="Your name" error={nameErr}>
+                {(id, props) => (
+                  <input
+                    {...props}
+                    id={id}
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Jane Doe"
+                  />
+                )}
+              </Field>
+              <Field id="email" label="Email" error={emailErr}>
+                {(id, props) => (
+                  <input
+                    {...props}
+                    id={id}
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                  />
+                )}
+              </Field>
+
+              {submitErr && <ErrorBanner>{submitErr}</ErrorBanner>}
+
+              <div className="wizard-actions">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setStep(2)}
+                >
+                  Back
+                </Button>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  loading={sending}
+                  disabled={sending}
+                >
+                  {sending ? "Sending…" : "Get my free quote"}
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </form>
       </div>
-    </main>
+    </PageShell>
   );
 }

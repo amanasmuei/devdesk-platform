@@ -3,6 +3,16 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { API_URL, AdminRequest, NEXT_STATUS, statusLabel } from "../lib";
+import {
+  AuthForm,
+  Button,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  LoadingState,
+  PageShell,
+  StatusBadge,
+} from "../components";
 
 type Draft = {
   status: string;
@@ -10,6 +20,11 @@ type Draft = {
   quote_date: string;
   preview_url: string;
   admin_notes: string;
+};
+
+type SaveState = {
+  kind: "saving" | "saved" | "error";
+  message: string;
 };
 
 function toDraft(r: AdminRequest): Draft {
@@ -22,14 +37,20 @@ function toDraft(r: AdminRequest): Draft {
   };
 }
 
+function formatDate(value: string | null | undefined): string {
+  if (!value) return "";
+  return new Date(value).toLocaleDateString("en-MY", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
 export default function AdminPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [loggedIn, setLoggedIn] = useState(false);
   const [requests, setRequests] = useState<AdminRequest[] | null>(null);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
-  const [saveState, setSaveState] = useState<Record<string, string>>({});
+  const [saveState, setSaveState] = useState<Record<string, SaveState>>({});
   const [loadErr, setLoadErr] = useState("");
   // False until the /api/auth/me session probe finishes; avoids flashing
   // the login form for an already-signed-in admin.
@@ -45,13 +66,15 @@ export default function AdminPage() {
         if (res.ok) {
           const data = await res.json();
           if (data?.is_admin) {
+            setLoggedIn(true);
             await loadRequests();
           }
         }
       } catch {
         // not logged in; show the login form
+      } finally {
+        setBooted(true);
       }
-      setBooted(true);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -70,47 +93,58 @@ export default function AdminPage() {
       const d: Record<string, Draft> = {};
       for (const r of list) d[String(r.id)] = toDraft(r);
       setDrafts(d);
+      setLoadErr("");
     } catch {
       setLoadErr("Could not load requests. Please try again.");
     }
   }
 
-  async function login() {
-    if (!email.trim() || !password) {
-      setErr("Enter your email and password.");
-      return;
+  async function handleAuth(input: {
+    email: string;
+    password: string;
+  }): Promise<string | null> {
+    const res = await fetch(`${API_URL}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ email: input.email, password: input.password }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      return data?.error ?? "Login failed. Check your email and password.";
     }
-    setErr("");
-    setBusy(true);
+    if (!data?.is_admin) {
+      return "Admin access required.";
+    }
+    setLoggedIn(true);
+    await loadRequests();
+    return null;
+  }
+
+  async function logout() {
     try {
-      const res = await fetch(`${API_URL}/api/auth/login`, {
+      await fetch(`${API_URL}/api/auth/logout`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ email: email.trim(), password }),
       });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        setErr(data?.error ?? "Login failed. Check your email and password.");
-        setBusy(false);
-        return;
-      }
-      if (!data?.is_admin) {
-        setErr("Admin access required.");
-        setBusy(false);
-        return;
-      }
-      await loadRequests();
     } catch {
-      setErr("Could not reach the server. Please try again.");
+      // ignore network errors on logout
     }
-    setBusy(false);
+    setLoggedIn(false);
+    setRequests(null);
+    setDrafts({});
+    setSaveState({});
+    setLoadErr("");
   }
 
   async function save(id: string | number) {
-    const d = drafts[String(id)];
+    const key = String(id);
+    const d = drafts[key];
     if (!d) return;
-    setSaveState((s) => ({ ...s, [String(id)]: "Saving…" }));
+    setSaveState((s) => ({
+      ...s,
+      [key]: { kind: "saving", message: "Saving…" },
+    }));
     try {
       const body: Record<string, unknown> = {
         status: d.status,
@@ -127,14 +161,16 @@ export default function AdminPage() {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        // Surface the server's message (e.g. transition rules, bad URL).
         throw new Error(data?.error ?? `Save failed (${res.status})`);
       }
-      setSaveState((s) => ({ ...s, [String(id)]: "Saved" }));
+      setSaveState((s) => ({
+        ...s,
+        [key]: { kind: "saved", message: "Saved" },
+      }));
       setRequests((rs) =>
         rs
           ? rs.map((r) =>
-              String(r.id) === String(id)
+              String(r.id) === key
                 ? {
                     ...r,
                     status: d.status,
@@ -147,19 +183,21 @@ export default function AdminPage() {
             )
           : rs
       );
-      setTimeout(
-        () =>
-          setSaveState((s) => {
-            const n = { ...s };
-            delete n[String(id)];
-            return n;
-          }),
-        2500
-      );
+      setTimeout(() => {
+        setSaveState((s) => {
+          const n = { ...s };
+          delete n[key];
+          return n;
+        });
+      }, 2500);
     } catch (e) {
       setSaveState((s) => ({
         ...s,
-        [String(id)]: (e instanceof Error && e.message) || "Save failed — retry",
+        [key]: {
+          kind: "error",
+          message:
+            (e instanceof Error && e.message) || "Save failed — retry",
+        },
       }));
     }
   }
@@ -171,68 +209,58 @@ export default function AdminPage() {
     }));
   }
 
-  if (!booted || (!requests && !loadErr)) {
+  if (!booted) {
     return (
-      <main className="panel">
+      <PageShell>
+        <LoadingState />
+      </PageShell>
+    );
+  }
+
+  if (!loggedIn) {
+    return (
+      <PageShell>
         <nav className="nav">
           <div className="nav-inner">
             <Link className="wordmark" href="/">
               DevDesk
             </Link>
-            <Link className="btn btn-ghost" href="/">
+            <Button variant="ghost" href="/">
               Back to site
-            </Link>
+            </Button>
           </div>
         </nav>
-        <div className="panel-card" style={{ marginTop: 56 }}>
-          <h1>Admin</h1>
-          <p className="panel-sub">Log in to manage incoming requests.</p>
-          <label className="field">
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@example.com"
-            />
-          </label>
-          <label className="field">
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Password"
-            />
-          </label>
-          <div className="err">{err}</div>
-          <button
-            className="btn btn-primary"
-            style={{ width: "100%" }}
-            onClick={login}
-            disabled={busy}
-          >
-            {busy ? "Logging in…" : "Log in"}
-          </button>
+        <div className="panel-card panel-card--auth">
+          <AuthForm
+            title="Admin"
+            subtitle="Log in to manage incoming requests."
+            allowRegister={false}
+            onSubmit={handleAuth}
+          />
         </div>
-      </main>
+      </PageShell>
     );
   }
 
   return (
-    <main className="panel" style={{ maxWidth: 1100 }}>
+    <PageShell wide>
       <div className="page-header">
         <Link className="wordmark" href="/">
           DevDesk
         </Link>
-        <span className="badge" style={{ border: "none" }}>
-          Admin
-        </span>
+        <div className="page-header-actions">
+          <span className="badge badge-role">Admin</span>
+          <Button variant="ghost" size="sm" onClick={logout}>
+            Log out
+          </Button>
+        </div>
       </div>
-      <h2 style={{ textAlign: "left", marginTop: 24 }}>All requests</h2>
+      <h1 className="page-title">All requests</h1>
 
-      {loadErr && <div className="err">{loadErr}</div>}
+      {loadErr && <ErrorBanner>{loadErr}</ErrorBanner>}
 
       {requests && requests.length === 0 && (
-        <div className="empty">No requests yet.</div>
+        <EmptyState>No requests yet.</EmptyState>
       )}
 
       <div className="admin-table">
@@ -240,6 +268,9 @@ export default function AdminPage() {
           const id = String(r.id);
           const d = drafts[id];
           if (!d) return null;
+          const saving = saveState[id]?.kind === "saving";
+          const note = saveState[id];
+          const isTerminal = !NEXT_STATUS[r.status];
           return (
             <div className="admin-row" key={id}>
               <div>
@@ -248,100 +279,119 @@ export default function AdminPage() {
                     <div className="who">{r.name}</div>
                     <div className="meta-line">{r.email}</div>
                   </div>
-                  <span className={`badge ${r.status}`}>
-                    {statusLabel(r.status)}
-                  </span>
+                  <StatusBadge status={r.status} />
                 </div>
-                <div className="meta-line" style={{ marginTop: 6 }}>
+                <div className="meta-line">
                   {r.service}
                   {r.urgency ? ` · ${r.urgency}` : ""}
-                  {r.created_at
-                    ? ` · ${new Date(r.created_at).toLocaleDateString()}`
-                    : ""}
+                  {r.created_at ? ` · ${formatDate(r.created_at)}` : ""}
                 </div>
                 <div className="dtl">{r.details}</div>
               </div>
 
               <div className="admin-edit">
-                <div>
-                  <label>Status</label>
-                  <select
-                    value={d.status}
-                    onChange={(e) => update(id, { status: e.target.value })}
-                  >
-                    {/* Current status plus the one legal next step; the
-                        API rejects anything else with a 409. */}
-                    {[r.status, NEXT_STATUS[r.status]].filter(Boolean).map((s) => (
-                      <option key={s} value={s}>
-                        {statusLabel(s)}
-                        {s !== r.status ? " (next step)" : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label>Quote price (RM)</label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={d.quote_price}
-                    onChange={(e) =>
-                      update(id, { quote_price: e.target.value })
-                    }
-                  />
-                </div>
-                <div>
-                  <label>Quote date</label>
-                  <input
-                    type="date"
-                    value={d.quote_date}
-                    onChange={(e) => update(id, { quote_date: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <label>Preview link</label>
-                  <input
-                    type="url"
-                    value={d.preview_url}
-                    onChange={(e) => update(id, { preview_url: e.target.value })}
-                    placeholder="https://… (shown to client when delivered)"
-                  />
-                </div>
+                {isTerminal ? (
+                  <div className="status-static">
+                    <span className="status-static-label">Status</span>
+                    <StatusBadge status={r.status} />
+                  </div>
+                ) : (
+                  <Field id={`admin-status-${id}`} label="Status">
+                    {(fid, props) => (
+                      <select
+                        {...props}
+                        id={fid}
+                        value={d.status}
+                        onChange={(e) =>
+                          update(id, { status: e.target.value })
+                        }
+                      >
+                        {/* Current status plus the one legal next step; the
+                            API rejects anything else with a 409. */}
+                        {[r.status, NEXT_STATUS[r.status]]
+                          .filter(Boolean)
+                          .map((s) => (
+                            <option key={s} value={s}>
+                              {statusLabel(s)}
+                              {s !== r.status ? " (next step)" : ""}
+                            </option>
+                          ))}
+                      </select>
+                    )}
+                  </Field>
+                )}
+                <Field id={`admin-price-${id}`} label="Quote price (RM)">
+                  {(fid, props) => (
+                    <input
+                      {...props}
+                      id={fid}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={d.quote_price}
+                      onChange={(e) =>
+                        update(id, { quote_price: e.target.value })
+                      }
+                    />
+                  )}
+                </Field>
+                <Field id={`admin-date-${id}`} label="Quote date">
+                  {(fid, props) => (
+                    <input
+                      {...props}
+                      id={fid}
+                      type="date"
+                      value={d.quote_date}
+                      onChange={(e) =>
+                        update(id, { quote_date: e.target.value })
+                      }
+                    />
+                  )}
+                </Field>
+                <Field id={`admin-preview-${id}`} label="Preview link">
+                  {(fid, props) => (
+                    <input
+                      {...props}
+                      id={fid}
+                      type="url"
+                      value={d.preview_url}
+                      onChange={(e) =>
+                        update(id, { preview_url: e.target.value })
+                      }
+                      placeholder="https://… (shown to client when delivered)"
+                    />
+                  )}
+                </Field>
               </div>
 
               <div className="admin-actions">
-                <div>
-                  <label
-                    style={{
-                      fontSize: "0.76rem",
-                      fontWeight: 600,
-                      color: "var(--faint)",
-                      letterSpacing: "0.06em",
-                      textTransform: "uppercase",
-                      display: "block",
-                      marginBottom: 4,
-                    }}
-                  >
-                    Admin notes
-                  </label>
-                  <textarea
-                    value={d.admin_notes}
-                    onChange={(e) =>
-                      update(id, { admin_notes: e.target.value })
-                    }
-                  />
-                </div>
-                <button className="btn btn-primary" onClick={() => save(id)}>
-                  Save
-                </button>
-                {saveState[id] && (
+                <Field id={`admin-notes-${id}`} label="Admin notes">
+                  {(fid, props) => (
+                    <textarea
+                      {...props}
+                      id={fid}
+                      value={d.admin_notes}
+                      onChange={(e) =>
+                        update(id, { admin_notes: e.target.value })
+                      }
+                    />
+                  )}
+                </Field>
+                <Button
+                  variant="primary"
+                  loading={saving}
+                  disabled={saving}
+                  onClick={() => save(id)}
+                >
+                  {saving ? "Saving…" : "Save"}
+                </Button>
+                {note && (
                   <div
-                    className={`save-note ${
-                      saveState[id].includes("fail") ? "err" : ""
-                    }`}
+                    className={`save-note ${note.kind === "error" ? "err" : ""}`}
+                    role={note.kind === "error" ? "alert" : "status"}
+                    aria-live="polite"
                   >
-                    {saveState[id]}
+                    {note.message}
                   </div>
                 )}
               </div>
@@ -349,6 +399,6 @@ export default function AdminPage() {
           );
         })}
       </div>
-    </main>
+    </PageShell>
   );
 }

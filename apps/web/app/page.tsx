@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Button } from "./components";
 
 const services = [
   {
@@ -106,23 +107,51 @@ export default function Home() {
           <Link className="wordmark" href="/">
             DevDesk
           </Link>
-          <div className="nav-links">
-            <a className="navlink" href="#services">
-              Services
-            </a>
-            <a className="navlink" href="#process">
-              Process
-            </a>
-            <a className="navlink" href="#faq">
-              FAQ
-            </a>
-            <Link className="btn btn-primary" href="/order">
-              Get a free quote
-            </Link>
+          <div className="nav-right">
+            <div className="nav-links">
+              <a className="navlink" href="#services">
+                Services
+              </a>
+              <a className="navlink" href="#process">
+                Process
+              </a>
+              <a className="navlink" href="#pricing">
+                Pricing
+              </a>
+              <a className="navlink" href="#faq">
+                FAQ
+              </a>
+            </div>
+            <div className="nav-end">
+              <Button variant="primary" href="/order">
+                Get a free quote
+              </Button>
+              <details className="nav-menu">
+                <summary>Menu</summary>
+                <div className="nav-menu-panel">
+                  <a className="navlink" href="#services">
+                    Services
+                  </a>
+                  <a className="navlink" href="#process">
+                    Process
+                  </a>
+                  <a className="navlink" href="#pricing">
+                    Pricing
+                  </a>
+                  <a className="navlink" href="#faq">
+                    FAQ
+                  </a>
+                  <a className="navlink" href="/order">
+                    Get a free quote
+                  </a>
+                </div>
+              </details>
+            </div>
           </div>
         </div>
       </nav>
 
+      <main id="main">
       <header className="wrap hero">
         <div className="eyebrow">
           <span className="dot"></span>
@@ -139,12 +168,12 @@ export default function Home() {
           meetings, no pressure.
         </p>
         <div className="hero-ctas">
-          <Link className="btn btn-primary" href="/order">
+          <Button variant="primary" href="/order">
             Start a request
-          </Link>
-          <a className="btn btn-ghost" href="#services">
+          </Button>
+          <Button variant="ghost" href="#services">
             Explore services
-          </a>
+          </Button>
         </div>
         <p className="micro">
           Free to ask · Pay only after you see the work · Quote within 24h
@@ -224,7 +253,7 @@ export default function Home() {
           {faqs.map((f) => (
             <details key={f.q}>
               <summary>
-                {f.q} <span className="plus">+</span>
+                {f.q} <span className="plus" aria-hidden="true">+</span>
               </summary>
               <p>{f.a}</p>
             </details>
@@ -238,17 +267,18 @@ export default function Home() {
           <p>
             Describe it now — the quote is free and arrives within 24 hours.
           </p>
-          <Link className="btn btn-primary" href="/order">
+          <Button variant="primary" href="/order">
             Start a request
-          </Link>
+          </Button>
         </div>
       </div>
+      </main>
 
       <footer className="footer">
         <div className="wrap foot">
           <span>
-            <b style={{ color: "var(--text)", fontWeight: 700 }}>DevDesk</b> —
-            You describe it, we build it.
+            <b className="foot-mark">DevDesk</b> — You describe it, we build
+            it.
           </span>
           <span>
             Questions?{" "}

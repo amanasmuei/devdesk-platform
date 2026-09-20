@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import Link from "next/link";
 import { API_URL } from "../lib";
 import {
+  AuthForm,
   Button,
   ErrorBanner,
   Field,
@@ -51,62 +52,165 @@ const URGENCY_CHOICES = [
   { val: "Flexible", label: "Flexible", small: "No rush — quality first" },
 ];
 
+// Three questions (service, details, urgency) plus the review rung.
 const TOTAL = 4;
 
+// POST /api/requests still requires name and email (the API is unchanged),
+// so both are derived from the logged-in session instead of being asked.
+// "sara.k@example.com" -> "Sara K"; fall back to "Client" if unusable.
+function nameFromEmail(email: string): string {
+  const local = email.trim().split("@")[0] ?? "";
+  const name = local
+    .split(/[._+-]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ")
+    .trim();
+  return name || "Client";
+}
+
 export default function OrderPage() {
+  // Booted gate: restore any existing session before rendering so an
+  // authenticated visitor never sees a flash of the auth screen.
+  const [booted, setBooted] = useState(false);
+  const [view, setView] = useState<"auth" | "wizard">("auth");
+  const [sessionEmail, setSessionEmail] = useState("");
+  const [sessionExpired, setSessionExpired] = useState(false);
+
   const [step, setStep] = useState(0);
   const [service, setService] = useState("");
   const [details, setDetails] = useState("");
   const [urgency, setUrgency] = useState("");
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [nameErr, setNameErr] = useState("");
-  const [emailErr, setEmailErr] = useState("");
   const [detailsErr, setDetailsErr] = useState("");
   const [submitErr, setSubmitErr] = useState("");
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
-  const [password, setPassword] = useState("");
-  const [accountState, setAccountState] = useState<
-    "idle" | "creating" | "created" | "exists" | "skip" | "error"
-  >("idle");
-  const [accountErr, setAccountErr] = useState("");
 
-  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/auth/me`, {
+          credentials: "include",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.email && !data.is_admin) {
+            setSessionEmail(String(data.email));
+            setView("wizard");
+          }
+        }
+      } catch {
+        // not logged in; show the auth screen
+      } finally {
+        setBooted(true);
+      }
+    })();
+  }, []);
+
+  async function handleAuth(input: {
+    email: string;
+    password: string;
+    mode: "login" | "register";
+  }): Promise<string | null> {
+    try {
+      const res = await fetch(
+        `${API_URL}${
+          input.mode === "login" ? "/api/auth/login" : "/api/auth/register"
+        }`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ email: input.email, password: input.password }),
+        }
+      );
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        if (
+          input.mode === "register" &&
+          typeof data?.error === "string" &&
+          data.error.includes("already exists")
+        ) {
+          return "An account with this email already exists. Log in instead.";
+        }
+        return input.mode === "login"
+          ? "Login failed. Check your email and password."
+          : "Could not create the account. Try again.";
+      }
+      if (data?.role === "admin" || data?.is_admin) {
+        return "This is an admin account. Use the admin page.";
+      }
+    } catch {
+      return "Could not reach the server. Please try again.";
+    }
+
+    // Session cookie is set; confirm it and read the canonical email —
+    // the submit body derives name and email from the session.
+    try {
+      const me = await fetch(`${API_URL}/api/auth/me`, {
+        credentials: "include",
+      });
+      if (me.ok) {
+        const who = await me.json();
+        if (who?.email && !who.is_admin) {
+          setSessionEmail(String(who.email));
+          setSessionExpired(false);
+          setView("wizard");
+          return null;
+        }
+      }
+    } catch {
+      // fall through to the message below
+    }
+    return "Signed in, but the session could not be confirmed. Please try again.";
+  }
 
   async function submit() {
-    const nameTrimmed = name.trim();
-    const emailTrimmed = email.trim();
-    let valid = true;
-
-    if (!nameTrimmed) {
-      setNameErr("Please tell us your name.");
-      valid = false;
-    } else {
-      setNameErr("");
-    }
-    if (!emailOk) {
-      setEmailErr("That email doesn't look right.");
-      valid = false;
-    } else {
-      setEmailErr("");
-    }
-    if (!valid) return;
-
     setSubmitErr("");
     setSending(true);
     try {
+      // Re-validate the session before sending: the submit endpoint itself
+      // is public, so an expired cookie must be caught here (401) and lead
+      // back to the auth screen rather than to an anonymous submission.
+      // Everything the visitor typed stays in state either way.
+      let email = sessionEmail;
+      try {
+        const me = await fetch(`${API_URL}/api/auth/me`, {
+          credentials: "include",
+        });
+        if (me.status === 401) {
+          setSessionExpired(true);
+          setSending(false);
+          return;
+        }
+        if (me.ok) {
+          const who = await me.json();
+          if (who?.email && !who.is_admin) {
+            email = String(who.email);
+            setSessionEmail(email);
+          }
+        }
+      } catch {
+        // could not double-check; still attempt the submit below
+      }
+
       const res = await fetch(`${API_URL}/api/requests`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
-          name: nameTrimmed,
-          email: emailTrimmed,
+          name: nameFromEmail(email),
+          email,
           service,
           urgency,
           details,
         }),
       });
+      if (res.status === 401) {
+        setSessionExpired(true);
+        setSending(false);
+        return;
+      }
       if (!res.ok) throw new Error(String(res.status));
       setDone(true);
     } catch {
@@ -114,34 +218,6 @@ export default function OrderPage() {
         "Something went wrong sending your request. Please try again, or email us directly at amanasmuei@gmail.com."
       );
       setSending(false);
-    }
-  }
-
-  async function createAccount() {
-    if (password.length < 8) {
-      setAccountErr("Password must be at least 8 characters.");
-      return;
-    }
-    setAccountErr("");
-    setAccountState("creating");
-    try {
-      const res = await fetch(`${API_URL}/api/auth/register`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ email: email.trim(), password }),
-      });
-      if (res.status === 409) {
-        setAccountState("exists");
-        return;
-      }
-      if (!res.ok) throw new Error(String(res.status));
-      setAccountState("created");
-    } catch {
-      setAccountState("error");
-      setAccountErr(
-        "Could not create the account. You can retry or use the portal later."
-      );
     }
   }
 
@@ -161,18 +237,34 @@ export default function OrderPage() {
     }
   }
 
+  if (!booted) {
+    return (
+      <PageShell variant="wrap">
+        <LoadingState>Checking your session…</LoadingState>
+      </PageShell>
+    );
+  }
+
+  const firstName = nameFromEmail(sessionEmail).split(" ")[0] ?? "there";
+
   if (done) {
     return (
       <PageShell variant="wrap">
         <div className="wizard-shell">
           <div className="success">
             <div className="ring" aria-hidden="true">&#10003;</div>
-            <h1>Request sent, {name.trim().split(" ")[0]}</h1>
+            <h1>Request sent, {firstName}</h1>
             <p>
               Check your inbox within 24 hours for your fixed quote.
               <br />
-              Sit tight — you&apos;ve done your part.
+              You can also follow it live in your portal.
             </p>
+          </div>
+
+          <div className="post-submit">
+            <Button variant="primary" href="/portal" fullWidth>
+              Go to your portal
+            </Button>
           </div>
 
           <p className="back-link">
@@ -180,112 +272,38 @@ export default function OrderPage() {
               Back to site
             </Link>
           </p>
+        </div>
+      </PageShell>
+    );
+  }
 
-          <div className="next-step">
-            <div className="step-label">Optional next step</div>
+  if (view === "auth") {
+    return (
+      <PageShell variant="wrap">
+        <nav className="nav nav-page">
+          <div className="nav-inner">
+            <Link className="wordmark" href="/">
+              DevDesk
+            </Link>
+            <Button variant="ghost" href="/">
+              Back to site
+            </Button>
+          </div>
+        </nav>
 
-            {accountState === "idle" && (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void createAccount();
-                }}
-                noValidate
-              >
-                <div className="post-submit">
-                  <div className="q">
-                    Track this request live in the client portal
-                  </div>
-                  <div className="qhelp">
-                    Set a password for {email.trim()} to see your quote,
-                    accept or decline it, and follow progress — all in
-                    writing.
-                  </div>
-                  <Field
-                    id="account-password"
-                    label="Create a portal password"
-                    error={accountErr}
-                  >
-                    {(id, props) => (
-                      <input
-                        {...props}
-                        id={id}
-                        type="password"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="8+ characters"
-                      />
-                    )}
-                  </Field>
-                  <div className="post-submit-actions">
-                    <Button type="submit" variant="primary">
-                      Create password
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      onClick={() => setAccountState("skip")}
-                    >
-                      No thanks
-                    </Button>
-                  </div>
-                </div>
-              </form>
-            )}
-
-            {accountState === "creating" && (
-              <div className="post-submit">
-                <LoadingState>Creating your account…</LoadingState>
-              </div>
-            )}
-
-            {accountState === "created" && (
-              <div className="post-submit">
-                <p>Account created. Your request is already linked.</p>
-                <Button variant="primary" href="/portal">
-                  Go to your portal
-                </Button>
-              </div>
-            )}
-
-            {(accountState === "exists" || accountState === "skip") && (
-              <div className="post-submit">
-                {accountState === "exists" ? (
-                  <p>
-                    An account with this email already exists — log in to
-                    see this request.
-                  </p>
-                ) : (
-                  <p>
-                    No problem — your quote will arrive by email. You can
-                    create a portal account any time.
-                  </p>
-                )}
-                <Button variant="ghost" href="/portal">
-                  Client portal
-                </Button>
-              </div>
-            )}
-
-            {accountState === "error" && (
-              <div className="post-submit">
-                <ErrorBanner>{accountErr}</ErrorBanner>
-                <div className="post-submit-actions">
-                  <Button
-                    variant="primary"
-                    onClick={() => void createAccount()}
-                  >
-                    Retry
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => setAccountState("skip")}
-                  >
-                    Skip for now
-                  </Button>
-                </div>
-              </div>
-            )}
+        <div className="order-auth">
+          {sessionExpired && (
+            <div className="notice" role="status">
+              Your session expired while you were writing. Sign in again —
+              everything you entered is saved and ready to send.
+            </div>
+          )}
+          <div className="panel-card">
+            <AuthForm
+              title="Start your request"
+              subtitle="Log in or create a free account first — the request itself takes about a minute."
+              onSubmit={handleAuth}
+            />
           </div>
         </div>
       </PageShell>
@@ -315,7 +333,7 @@ export default function OrderPage() {
         <form onSubmit={handleSubmit} noValidate>
           {step === 0 && (
             <div>
-              <div className="step-label">Step 1 of 4</div>
+              <div className="step-label">Step 1 of 3</div>
               <h1 className="q">What do you need help with?</h1>
               <div className="qhelp">
                 Pick the closest match — details come next.
@@ -345,7 +363,7 @@ export default function OrderPage() {
 
           {step === 1 && (
             <div>
-              <div className="step-label">Step 2 of 4</div>
+              <div className="step-label">Step 2 of 3</div>
               <h1 className="q">Tell us what&apos;s going on.</h1>
               <Field
                 id="details"
@@ -380,7 +398,7 @@ export default function OrderPage() {
 
           {step === 2 && (
             <div>
-              <div className="step-label">Step 3 of 4</div>
+              <div className="step-label">Step 3 of 3</div>
               <h1 className="q">When do you need it?</h1>
               <div className="qhelp">Honest answers get honest schedules.</div>
               <div className="choices">
@@ -417,10 +435,11 @@ export default function OrderPage() {
 
           {step === 3 && (
             <div>
-              <div className="step-label">Step 4 of 4</div>
-              <h1 className="q">Where should we send your quote?</h1>
+              <div className="step-label">Review and send</div>
+              <h1 className="q">One last look before we send it.</h1>
               <div className="qhelp">
-                No spam, no newsletter — just your quote.
+                We&apos;ll send your fixed quote to{" "}
+                <b>{sessionEmail}</b> — the email on your account.
               </div>
 
               <div className="review">
@@ -436,52 +455,59 @@ export default function OrderPage() {
                   <span className="review-key">Timing</span>
                   <span className="review-val">{urgency}</span>
                 </div>
+                <div className="review-row">
+                  <span className="review-key">Quote to</span>
+                  <span className="review-val">{sessionEmail}</span>
+                </div>
               </div>
 
-              <Field id="name" label="Your name" error={nameErr}>
-                {(id, props) => (
-                  <input
-                    {...props}
-                    id={id}
-                    type="text"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="Jane Doe"
-                  />
-                )}
-              </Field>
-              <Field id="email" label="Email" error={emailErr}>
-                {(id, props) => (
-                  <input
-                    {...props}
-                    id={id}
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@example.com"
-                  />
-                )}
-              </Field>
+              {sessionExpired ? (
+                <>
+                  <div className="notice" role="alert">
+                    Your session expired, so we couldn&apos;t send your request
+                    yet. Sign in again — your answers are saved and nothing
+                    needs to be re-entered.
+                  </div>
+                  <div className="wizard-actions">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setStep(2)}
+                    >
+                      Back
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="primary"
+                      onClick={() => setView("auth")}
+                    >
+                      Sign in again
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {submitErr && <ErrorBanner>{submitErr}</ErrorBanner>}
 
-              {submitErr && <ErrorBanner>{submitErr}</ErrorBanner>}
-
-              <div className="wizard-actions">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setStep(2)}
-                >
-                  Back
-                </Button>
-                <Button
-                  type="submit"
-                  variant="primary"
-                  loading={sending}
-                  disabled={sending}
-                >
-                  {sending ? "Sending…" : "Get my free quote"}
-                </Button>
-              </div>
+                  <div className="wizard-actions">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setStep(2)}
+                    >
+                      Back
+                    </Button>
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      loading={sending}
+                      disabled={sending}
+                    >
+                      {sending ? "Sending…" : "Get my free quote"}
+                    </Button>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </form>
